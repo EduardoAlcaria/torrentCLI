@@ -64,7 +64,7 @@ def featch_magnet(magnet_link='', magnet_array = []):
                 
 
                 pct = int(s.progress * 100)
-                print(f'Download debug for the {s.name} {s.progress}%')
+                print(f'Download debug for the {s.name} {s.progresst}%')
 
                 progress.update(task_id=task_id, completed=pct)
 
