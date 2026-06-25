@@ -5,10 +5,45 @@ torrent state via poll() and lets the caller pause/resume and snapshot fast-resu
 blobs. Policy (what to persist, what to show) lives in the app, not here.
 """
 
-import time
 from pathlib import Path
 
 import libtorrent as lt
+
+# DHT bootstrap nodes — needed to find peers for magnets quickly.
+DHT_ROUTERS = [
+    ("router.bittorrent.com", 6881),
+    ("dht.transmissionbt.com", 6881),
+    ("router.utorrent.com", 6881),
+    ("dht.libtorrent.org", 25401),
+]
+
+# Public trackers appended to every magnet so peers are found even when DHT is slow.
+DEFAULT_TRACKERS = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.tracker.cl:1337/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+]
+
+# Session tuning: enable peer-discovery on every channel + generous limits.
+SESSION_SETTINGS = {
+    "listen_interfaces": "0.0.0.0:6881,[::]:6881",
+    "enable_dht": True,
+    "enable_lsd": True,        # local peer discovery
+    "enable_upnp": True,       # auto port-forward via router
+    "enable_natpmp": True,
+    "announce_to_all_trackers": True,
+    "announce_to_all_tiers": True,
+    "connections_limit": 500,
+    "active_downloads": -1,
+    "active_seeds": -1,
+    "active_limit": -1,
+    "download_rate_limit": 0,   # unlimited
+    "upload_rate_limit": 0,
+    "alert_mask": lt.alert.category_t.status_notification
+    | lt.alert.category_t.error_notification,
+}
 
 
 def _infohash(atp):
@@ -19,9 +54,9 @@ class TorrentManager:
     def __init__(self, save_path="downloads"):
         self.save_path = str(Path(save_path).resolve())
         Path(self.save_path).mkdir(parents=True, exist_ok=True)
-        self.session = lt.session()
-        self.session.listen_on(6881, 6891)
-        self.session.start_dht()
+        self.session = lt.session(SESSION_SETTINGS)
+        for host, port in DHT_ROUTERS:
+            self.session.add_dht_router(host, port)
         self.handles = {}  # infohash -> torrent_handle
 
     def add_magnet(self, magnet, resume_blob=None):
@@ -34,6 +69,11 @@ class TorrentManager:
         else:
             atp = lt.parse_magnet_uri(magnet)
         atp.save_path = self.save_path
+        # Merge default trackers in (dedupe against any already in the magnet).
+        existing = set(atp.trackers)
+        atp.trackers = list(atp.trackers) + [
+            t for t in DEFAULT_TRACKERS if t not in existing
+        ]
         infohash = _infohash(atp)
         handle = self.session.add_torrent(atp)
         self.handles[infohash] = handle
@@ -77,8 +117,31 @@ class TorrentManager:
             if h.is_valid():
                 h.pause()
 
+    def request_resume(self, infohash):
+        """Ask libtorrent to produce resume data; non-blocking.
+
+        The blob arrives later as a save_resume_data_alert, collected by
+        drain_resume_alerts(). Use this on the hot UI path.
+        """
+        h = self.handles.get(infohash)
+        if h and h.is_valid():
+            h.save_resume_data(lt.torrent_handle.save_info_dict)
+
+    def drain_resume_alerts(self):
+        """Non-blocking: return [(infohash, blob)] for resume alerts since last call."""
+        out = []
+        by_handle = {h: ih for ih, h in self.handles.items()}
+        for a in self.session.pop_alerts():
+            if isinstance(a, lt.save_resume_data_alert):
+                ih = by_handle.get(a.handle)
+                if ih:
+                    out.append((ih, lt.write_resume_data_buf(a.params)))
+        return out
+
     def snapshot_resume(self, infohash, timeout=2.0):
-        """Request and return a fast-resume blob, or None if unavailable."""
+        """Request and return a fast-resume blob, or None. Blocking; quit-only."""
+        import time
+
         h = self.handles.get(infohash)
         if not h or not h.is_valid():
             return None
