@@ -71,10 +71,13 @@ class TorrentApp(App):
         table = self.query_one(DataTable)
         now = time.time()
         persist_resume = now - self._last_resume_persist >= RESUME_PERSIST_INTERVAL
+
+        latest = {}
         for r in self.manager.poll():
             ih = r["infohash"]
             if ih not in self._row_order:
                 continue
+            latest[ih] = r
             status = self._derive_status(r)
             table.update_cell(ih, "name", r["name"])
             table.update_cell(ih, "progress", _bar(r["progress"]))
@@ -84,13 +87,20 @@ class TorrentApp(App):
 
             if r["has_metadata"] and r["name"] != "(fetching metadata)":
                 self.store.set_name(ih, r["name"])
-
             if r["is_finished"]:
                 self.store.mark_done(ih)
-            elif persist_resume:
-                blob = self.manager.snapshot_resume(ih)
-                self.store.save_resume(ih, blob, r["progress"], status)
+
+        # Persist any resume blobs that arrived since last tick (non-blocking).
+        for ih, blob in self.manager.drain_resume_alerts():
+            r = latest.get(ih)
+            if r and not r["is_finished"]:
+                self.store.save_resume(ih, blob, r["progress"], self._derive_status(r))
+
+        # Periodically ask libtorrent for fresh resume data (arrives next ticks).
         if persist_resume:
+            for ih, r in latest.items():
+                if not r["is_finished"]:
+                    self.manager.request_resume(ih)
             self._last_resume_persist = now
 
     def _derive_status(self, row):
