@@ -100,7 +100,7 @@ class TorrentManager:
                     "state": str(s.state),
                     "is_finished": s.is_finished,
                     "has_metadata": s.has_metadata,
-                    "paused": handle.flags() & lt.torrent_flags.paused != 0,
+                    "paused": (handle.flags() & lt.torrent_flags.paused) != 0,
                     "error": str(s.error) if s.error else "",
                 }
             )
@@ -109,6 +109,7 @@ class TorrentManager:
     def pause(self, infohash):
         h = self.handles.get(infohash)
         if h and h.is_valid():
+            h.unset_flags(lt.torrent_flags.auto_managed)  # keep pause sticky
             h.pause()
 
     def resume(self, infohash):
@@ -119,6 +120,7 @@ class TorrentManager:
     def pause_all(self):
         for h in self.handles.values():
             if h.is_valid():
+                h.unset_flags(lt.torrent_flags.auto_managed)
                 h.pause()
 
     def request_resume(self, infohash):
