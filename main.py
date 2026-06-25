@@ -1,120 +1,93 @@
-import libtorrent as lt
-import time
+"""torrentCLI entry point.
+
+  python main.py "<magnet>"   -> add that single magnet
+  python main.py              -> read magnets.txt + resume DB unfinished torrents
+
+Wires together TorrentStore (sqlite), TorrentManager (libtorrent), and TorrentApp
+(textual). No business logic beyond source collection and dedupe.
+"""
+
 import sys
-import warnings
 from pathlib import Path
-from rich.progress import Progress, BarColumn, TextColumn, DownloadColumn, TransferSpeedColumn
-from rich.console import Console, Group
-from rich.live import Live
-from rich.panel import Panel
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+import libtorrent as lt
 
-class TorrentDownloader:
+from app import TorrentApp
+from db import TorrentStore
+from downloader import TorrentManager
 
-    
-    def __init__(self, download_dir='downloads'):
-        self.console = Console()
-        self.download_dir = Path(download_dir)
-        self.session = None
+MAGNETS_FILE = "magnets.txt"
+SAVE_PATH = "downloads"
 
-        
-    def initialize_session(self):
-      
-        self.session = lt.session()
-        self.session.listen_on(6881, 6891)
-        self.session.start_dht()
-        self.download_dir.mkdir(exist_ok=True)
-        
-    def add_torrent(self, magnet_link):
-      
-        if not magnet_link:
-            raise ValueError("Magnet link cannot be empty")
-            
-       
-        
-        params = lt.parse_magnet_uri(magnet_link)
-        params.save_path = str(self.download_dir.resolve())
-        
-        handle = self.session.add_torrent(params)
-        
 
-        while not handle.has_metadata():
-            time.sleep(0.1)
-            
-        return handle
-        
-    def download(self, handle):
-     
-        torrent_info = handle.torrent_file()
-        torrent_name = torrent_info.name() if torrent_info else handle.status().name
-        
-    
-        progress = Progress(
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            console=self.console
-        )
-        
-        task_id = progress.add_task(f"Downloading: {torrent_name}", total=100)
-        
-     
-        panel = Panel(
-            f"[bold green]Downloading:[/] {torrent_name}",
-            title="[bold cyan]Torrent Download[/]",
-            border_style="green"
-        )
-        self.console.print(panel)
-        
- 
-        with Live(progress, console=self.console, refresh_per_second=10):
-            while True:
-                status = handle.status()
-                
-                if status.is_seeding:
-                    break
-                    
-                progress_pct = status.progress * 100
-                progress.update(task_id, completed=progress_pct)
-                
-              
-                if status.error:
-                    raise RuntimeError(f"Download error: {status.error}")
-                    
-                time.sleep(0.1)
-        
-        self.console.print(f"\n[bold green]✓ Download complete:[/] {torrent_name}")
-        self.console.print(f"[cyan]Saved to:[/] {self.download_dir / torrent_name}")
-        
-    def fetch_magnet(self, magnet_link):
-        
-        try:
-            self.initialize_session()
-            handle = self.add_torrent(magnet_link)
-            self.download(handle)
-        except KeyboardInterrupt:
-            self.console.print("\n[yellow]Download cancelled by user[/]")
-            sys.exit(0)
-        except Exception as e:
-            self.console.print(f"\n[bold red]Error:[/] {str(e)}")
-            sys.exit(1)
+def read_magnets_file(path=MAGNETS_FILE):
+    """One magnet per line; blank lines and #comments skipped."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    out = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        out.append(line)
+    return out
+
+
+def magnet_infohash(magnet):
+    """v1 infohash hex for a magnet, or None if it can't be parsed."""
+    try:
+        return str(lt.parse_magnet_uri(magnet).info_hashes.v1)
+    except Exception:
+        return None
+
+
+def collect_sources(argv, store):
+    """Build a deduped (infohash, magnet, resume_blob) plan.
+
+    DB unfinished torrents come first (with their resume blobs); new magnets from
+    the CLI arg or magnets.txt are appended and registered in the store.
+    """
+    seen = set()
+    plan = []
+    save_path = str(Path(SAVE_PATH).resolve())
+
+    for row in store.list_unfinished():
+        ih = row["infohash"]
+        if ih in seen:
+            continue
+        seen.add(ih)
+        plan.append((ih, row["magnet"], row["resume_data"]))
+
+    magnets = [argv[1]] if len(argv) > 1 else read_magnets_file()
+    for m in magnets:
+        ih = magnet_infohash(m)
+        if not ih:
+            print(f"Skipping unparseable magnet: {m[:60]}...")
+            continue
+        if ih in seen:
+            continue
+        seen.add(ih)
+        store.upsert(ih, m, save_path=save_path)
+        plan.append((ih, m, None))
+
+    return plan
 
 
 def main():
+    store = TorrentStore()
+    manager = TorrentManager(SAVE_PATH)
 
-    if len(sys.argv) < 2:
-        Console().print("[bold red]Error:[/] Please provide a magnet link")
-        Console().print("[cyan]Usage:[/] python script.py <magnet_link>")
-        sys.exit(1)
-        
-    magnet_link = sys.argv[1]
-    
-    downloader = TorrentDownloader()
-    downloader.fetch_magnet(magnet_link)
+    for infohash, magnet, blob in collect_sources(sys.argv, store):
+        manager.add_magnet(magnet, resume_blob=blob)
+
+    if not manager.handles:
+        print("No torrents. Add magnets to magnets.txt or pass one as an argument.")
+        store.close()
+        return
+
+    TorrentApp(manager, store).run()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
