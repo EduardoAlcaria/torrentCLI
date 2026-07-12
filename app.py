@@ -57,9 +57,9 @@ def _bar(progress, width):
 
 class TorrentApp(App):
     CSS = """
-    Screen { background: #06121f; }
+    Screen { background: #0a0010; }
     #banner {
-        color: #4aa3ff;
+        color: #b56aff;
         text-style: bold;
         height: auto;
         content-align: center middle;
@@ -68,19 +68,19 @@ class TorrentApp(App):
     #body { height: 1fr; }
     DataTable {
         width: 2fr;
-        border: round #1e6fff;
-        background: #07182b;
+        border: round #8a2be2;
+        background: #14001f;
     }
-    DataTable > .datatable--cursor { background: #1e6fff; color: #ffffff; }
-    DataTable > .datatable--header { color: #7fc0ff; text-style: bold; }
+    DataTable > .datatable--cursor { background: #8a2be2; color: #ffffff; }
+    DataTable > .datatable--header { color: #c78fff; text-style: bold; }
     #sidebar {
         width: 1fr;
-        border: round #1e6fff;
-        background: #07182b;
-        color: #cfe6ff;
+        border: round #8a2be2;
+        background: #14001f;
+        color: #e6d2ff;
         padding: 1 2;
     }
-    Footer { background: #0a2540; color: #7fc0ff; }
+    Footer { background: #1a0026; color: #c78fff; }
     """
 
     BINDINGS = [
@@ -164,22 +164,22 @@ class TorrentApp(App):
         ih = self._selected
         r = self._latest.get(ih)
         if not r:
-            sidebar.update("[#7fc0ff]Select a torrent[/]")
+            sidebar.update("[#c78fff]Select a torrent[/]")
             return
         remaining = max(0, r["total_wanted"] - r["total_wanted_done"])
         lines = [
-            "[b #4aa3ff]TORRENT[/]",
-            f"[#7fc0ff]{r['name']}[/]",
+            "[b #b56aff]TORRENT[/]",
+            f"[#c78fff]{r['name']}[/]",
             "",
             _bar(r["progress"], 22),
             "",
-            f"[#7fc0ff]Status[/]    {self._derive_status(r)}",
-            f"[#7fc0ff]State[/]     {r['state']}",
-            f"[#7fc0ff]Down[/]      {_fmt_speed(r['download_rate'])}",
-            f"[#7fc0ff]Up[/]        {_fmt_speed(r['upload_rate'])}",
-            f"[#7fc0ff]Peers[/]     {r['num_peers']}  ([#7fc0ff]seeds[/] {r['num_seeds']})",
-            f"[#7fc0ff]Size[/]      {_fmt_size(r['total_wanted_done'])} / {_fmt_size(r['total_wanted'])}",
-            f"[#7fc0ff]ETA[/]       {_fmt_eta(remaining, r['download_rate'])}",
+            f"[#c78fff]Status[/]    {self._derive_status(r)}",
+            f"[#c78fff]State[/]     {r['state']}",
+            f"[#c78fff]Down[/]      {_fmt_speed(r['download_rate'])}",
+            f"[#c78fff]Up[/]        {_fmt_speed(r['upload_rate'])}",
+            f"[#c78fff]Peers[/]     {r['num_peers']}  ([#c78fff]seeds[/] {r['num_seeds']})",
+            f"[#c78fff]Size[/]      {_fmt_size(r['total_wanted_done'])} / {_fmt_size(r['total_wanted'])}",
+            f"[#c78fff]ETA[/]       {_fmt_eta(remaining, r['download_rate'])}",
             "",
             f"[dim]{ih}[/]",
         ]
