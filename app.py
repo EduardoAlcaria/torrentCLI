@@ -8,11 +8,24 @@ state; quit pauses everything and saves fast-resume blobs.
 
 import time
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import DataTable, Footer, Header, Static
 
 RESUME_PERSIST_INTERVAL = 5.0  # seconds between resume-blob snapshots
+
+STATUS_COLORS = {
+    "downloading": "#2ecc40",  # green
+    "completed": "#2ecc40",    # green
+    "paused": "#ffdc00",       # yellow
+    "queued": "#ffdc00",       # yellow
+    "error": "#ff4136",        # red
+}
+
+
+def _status_color(status):
+    return STATUS_COLORS.get(status, "#ffffff")
 
 BANNER = r"""
  ____  _ _   __  __      _        _
@@ -137,7 +150,7 @@ class TorrentApp(App):
             table.update_cell(ih, "progress", _bar(r["progress"], 34))
             table.update_cell(ih, "speed", _fmt_speed(r["download_rate"]))
             table.update_cell(ih, "peers", str(r["num_peers"]))
-            table.update_cell(ih, "status", status)
+            table.update_cell(ih, "status", Text(status, style=_status_color(status)))
 
             if r["has_metadata"] and r["name"] != "(fetching metadata)":
                 self.store.set_name(ih, r["name"])
@@ -173,7 +186,7 @@ class TorrentApp(App):
             "",
             _bar(r["progress"], 22),
             "",
-            f"[#c78fff]Status[/]    {self._derive_status(r)}",
+            f"[#c78fff]Status[/]    [{_status_color(self._derive_status(r))}]{self._derive_status(r)}[/]",
             f"[#c78fff]State[/]     {r['state']}",
             f"[#c78fff]Down[/]      {_fmt_speed(r['download_rate'])}",
             f"[#c78fff]Up[/]        {_fmt_speed(r['upload_rate'])}",
